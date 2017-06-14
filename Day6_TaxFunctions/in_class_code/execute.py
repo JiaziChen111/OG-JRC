@@ -46,17 +46,6 @@ etrparam_vec = txf_dict['tfunc_etr_params_S'].reshape(num_tx_params)
 mtrxparam_vec = txf_dict['tfunc_mtrx_params_S'].reshape(num_tx_params)
 mtryparam_vec = txf_dict['tfunc_mtry_params_S'].reshape(num_tx_params)
 
-# # # Make all ETRs equal the average
-# etrparam_vec = np.zeros(num_tx_params)
-# etrparam_vec[10] = txf_dict['tfunc_avg_etr']  # set shift to average rate
-
-# # # Make all MTRx equal the average
-# mtrxparam_vec = np.zeros(num_tx_params)
-# mtrxparam_vec[10] = txf_dict['tfunc_avg_mtrx']  # set shift to average rate
-
-# # # Make all MTRy equal the average
-# mtryparam_vec = np.zeros(num_tx_params)
-# mtryparam_vec[10] = txf_dict['tfunc_avg_mtry']  # set shift to average rate
 
 avg_inc_data = float(txf_dict['tfunc_avginc'])
 
@@ -68,18 +57,12 @@ delta = 1 - ((1 - delta_annual) ** (80 / S))
 # SS parameters
 SS_graph = True
 
-# This steady-state computation is very sensitive to initial values.
-# Start with constant (linear) tax rates equal to the average from the
-# data (lines 49-59). Then use the initial values from that solution as
-# initial values for the problem with flexible tax rate functions.
-K_init = 288.221359
-L_init = 51.7688426
-X_init = 0.216466270
-# 4.0 * A * (K_init ** alpha) * (L_init ** (1 - alpha)) / S
-# factor_init = 103000
-              # (avg_inc_data /
-              #  (0.6 * A * (K_init ** alpha) * (L_init ** (1 - alpha)) /
-              #   S))
+
+# Initial guesses at K, L, X
+K_init = 100.0
+L_init = 100.0
+X_init = 0.0
+
 init_vals = np.array([K_init, L_init, X_init])
 
 ss_args = (init_vals, beta, sigma, chi_n_vec, l_tilde, b_ellip, upsilon,

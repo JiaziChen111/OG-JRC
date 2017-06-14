@@ -13,8 +13,8 @@ def get_taxrates(lab_inc, cap_inc, factor, params):
     '''
     (A, B, C, D, max_x, min_x, max_y, min_y, shift_x, shift_y, shift,
         phi) = params
-    X = np.maximum(0.00001, factor * lab_inc)
-    Y = np.maximum(0.00001, factor * cap_inc)
+    X = np.maximum(0.0, factor * lab_inc)
+    Y = np.maximum(0.0, factor * cap_inc)
     # X = factor * lab_inc
     # Y = factor * cap_inc
     X2 = X ** 2

@@ -25,7 +25,7 @@ def get_SS(args, graph=False):
     mindist = 1e-08
     maxiter = 500
     ss_iter = 0
-    xi = 0.9
+    xi = 0.2
 
     r_params = (alpha, A, delta)
     w_params = (alpha, A)
@@ -49,8 +49,8 @@ def get_SS(args, graph=False):
         # print('nvec: ', nvec)
         # print('bvec: ', bvec)
         bs_vec = np.append(0, bvec[:-1])
-        K_new = aggr.get_K(bvec[:-1])
-        L_new = aggr.get_L(nvec)
+        K_new = max(aggr.get_K(bvec[:-1]), 0.001)
+        L_new = max(aggr.get_L(nvec), 0.001)
         lab_inc = w * nvec
         cap_inc = r * bs_vec
         tot_tax_liab_all = tax.get_tot_tax_liab(lab_inc, cap_inc,
