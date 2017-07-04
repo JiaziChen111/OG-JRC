@@ -11,12 +11,8 @@ This Python module defines the following function(s):
     get_cons()
     MU_c_stitch()
     MDU_n_stitch()
-    get_n_s()
     get_n_errors()
     get_b_errors()
-    bn_solve()
-    FOC_savings()
-    FOC_labor()
     get_cnb_vecs()
     c1_bSp1err()
 ------------------------------------------------------------------------
@@ -387,7 +383,7 @@ def MDU_n_stitch(nvec, params, graph=False):
     return MDU_n
 
 
-def get_n_errors(nvec, args):
+def get_n_errors(nvec, *args):
     '''
     --------------------------------------------------------------------
     Generates vector of static Euler errors that characterize the
@@ -398,50 +394,66 @@ def get_n_errors(nvec, args):
     transition path will be p in [2, S] periods
     --------------------------------------------------------------------
     INPUTS:
-    nvec      = (p,) vector, distribution of labor supply by age n_p
-    args    = length 8 tuple,
-                (w, cvec, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff)
-    w         = scalar > 0 or (p,) vector, steady-state wage or time
-                path of wage
-    cvec      = (p,) vector, distribution of consumption by age c_p
-    sigma     = scalar > 0, coefficient of relative risk aversion
-    l_tilde   = scalar > 0, time endowment of each agent in each period
-    chi_n_vec = (p,) vector, values for chi^n_p
-    b_ellip   = scalar > 0, fitted value of b for elliptical disutility
-                of labor
-    upsilon   = scalar > 1, fitted value of upsilon for elliptical
-                disutility of labo
-    diff      = Boolean, =True if use simple difference Euler errors.
-                Use percent difference errors otherwise.
+    nvec = (p,) vector, distribution of labor supply by age n_p
+    args = either length 8 tuple or length 10 tuple, is (w, sigma,
+           l_tilde, chi_n_vec, b_ellip, upsilon, diff, cvec) in most
+           cases. In the time path for the age-S individuals in period
+           1, the tuple is (wpath, sigma, l_tilde, chi_n_vec, b_ellip,
+           upsilon, diff, rpath, b_s_vec, b_sp1_vec)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
         MU_c_stitch()
         MDU_n_stitch()
 
     OBJECTS CREATED WITHIN FUNCTION:
-    mu_c     = (p,) vector, marginal utility of consumption
-    mu_n     = (p,) vector, marginal utility of labor supply
-    n_errors = (p,) vector, Euler errors characterizing optimal labor
-               supply nvec
+    w           = scalar > 0 or (p,) vector, steady-state wage or time
+                  path of wage
+    sigma       = scalar > 0, coefficient of relative risk aversion
+    l_tilde     = scalar > 0, time endowment of each agent in each per
+    chi_n_vec   = (p,) vector, values for chi^n_p
+    b_ellip     = scalar > 0, fitted value of b for elliptical
+                  disutility of labor
+    upsilon     = scalar > 1, fitted value of upsilon for elliptical
+                  disutility of labo
+    diff        = Boolean, =True if use simple difference Euler errors.
+                  Use percent difference errors otherwise
+    cvec        = (p,) vector, distribution of consumption by age c_p
+    mu_c        = (p,) vector, marginal utility of consumption
+    mdun_params = length 3 tuple, (l_tilde, b_ellip, upsilon)
+    mdu_n       = (p,) vector, marginal disutility of labor supply
+    n_errors    = (p,) vector, Euler errors characterizing optimal labor
+                  supply nvec
 
     FILES CREATED BY THIS FUNCTION: None
 
     RETURNS: n_errors
     --------------------------------------------------------------------
     '''
-    w, cvec, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff = args
+    if len(args) == 8:
+        # Steady-state, and almost all of TPI solutions pass in cvec.
+        # args is length 8
+        (wpath, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff,
+            cvec) = args
+
+    else:
+        # solving for n_{S,1} in TPI does not pass in cvec, but passes
+        # in rpath, b_s_vec, and b_sp1_vec instead. args is length 10
+        (wpath, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff,
+            rpath, b_s_vec, b_sp1_vec) = args
+        cvec = get_cons(rpath, wpath, b_s_vec, b_sp1_vec, nvec)
+
     mu_c = MU_c_stitch(cvec, sigma)
     mdun_params = (l_tilde, b_ellip, upsilon)
     mdu_n = MDU_n_stitch(nvec, mdun_params)
     if diff:
-        n_errors = (w * mu_c) - chi_n_vec * mdu_n
+        n_errors = (wpath * mu_c) - chi_n_vec * mdu_n
     else:
-        n_errors = ((w * mu_c) / (chi_n_vec * mdu_n)) - 1
+        n_errors = ((wpath * mu_c) / (chi_n_vec * mdu_n)) - 1
 
     return n_errors
 
 
-def get_b_errors(params, r, cvec, diff):
+def get_b_errors(cvec, r, args):
     '''
     --------------------------------------------------------------------
     Generates vector of dynamic Euler errors that characterize the
@@ -452,19 +464,19 @@ def get_b_errors(params, r, cvec, diff):
     will be p in [2, S] periods
     --------------------------------------------------------------------
     INPUTS:
-    params  = length 2 tuple, (beta, sigma)
-    beta    = scalar in (0,1), discount factor
-    sigma   = scalar > 0, coefficient of relative risk aversion
-    r       = scalar > 0 or (p,) vector, steady-state interest rate or
-              time path of interest rates
-    cvec    = (p,) vector, distribution of consumption by age c_p
-    diff    = boolean, =True if use simple difference Euler
-              errors. Use percent difference errors otherwise.
+    cvec = (p,) vector, distribution of consumption by age c_p
+    r    = scalar > 0 or (p-1,) vector, steady-state interest rate or
+           time path of interest rates
+    args = length 3 tuple, (beta, sigma, diff)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
         MU_c_stitch()
 
     OBJECTS CREATED WITHIN FUNCTION:
+    beta     = scalar in (0,1), discount factor
+    sigma    = scalar > 0, coefficient of relative risk aversion
+    diff     = boolean, =True if use simple difference Euler errors. Use
+               percent difference errors otherwise.
     mu_c     = (p-1,) vector, marginal utility of current consumption
     mu_cp1   = (p-1,) vector, marginal utility of next period consumpt'n
     b_errors = (p-1,) vector, Euler errors characterizing optimal
@@ -475,7 +487,7 @@ def get_b_errors(params, r, cvec, diff):
     RETURNS: b_errors
     --------------------------------------------------------------------
     '''
-    beta, sigma = params
+    beta, sigma, diff = args
     mu_c = MU_c_stitch(cvec[:-1], sigma)
     mu_cp1 = MU_c_stitch(cvec[1:], sigma)
 
@@ -487,64 +499,69 @@ def get_b_errors(params, r, cvec, diff):
     return b_errors
 
 
-def bn_solve(guesses, *args):
+def bn_errors(bn_vec, *args):
     '''
     --------------------------------------------------------------------
-    Finds the euler errors for certain b and n, one ability type at a time.
+    Computes labor supply and savings Euler errors for given b_{s+1} and
+    n_s vectors and given the path of interest rates and wages
     --------------------------------------------------------------------
     INPUTS:
-    guesses = (2S-1,) vector, initial guesses for b and n
-    params  = length 10 tuple, r, w, S, beta, sigma, l_tilde, b_ellip,
-              upsilon, chi_n_vec, diff
+    bn_vec = (2p-1,) vector, values for remaining life n_s and b_{s+1}
+    args   = length 11 tuple, (rpath, wpath, b_init, p, beta, sigma,
+             l_tilde, chi_n_vec, b_ellip, upsilon, diff)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        FOC_savings()
-        FOC_labor()
+        get_cons()
+        get_n_errors()
+        get_b_errors()
 
     OBJECTS CREATED WITHIN FUNCTION:
-    r         = scalar, real interest rate
-    w         = scalar, real wage rate
-    S         =
-    beta      =
-    sigma     =
-    l_tilde   =
-    b_ellip   =
-    upsilon   =
-    chi_n_vec =
-    diff      =
-    b_guess   = [S,] vector, initial guess at household savings
-    n_guess   = [S,] vector, initial guess at household labor supply
-    b_s       = [S,] vector, wealth enter period with
-    b_splus1  = [S,] vector, household savings
-    b_splus2  = [S,] vector, household savings one period ahead
-    b_params  =
-    error1    = [S,] vector, errors from FOC for savings
-    n_params  =
-    error2    = [S,] vector, errors from FOC for labor supply
-    tax1 = [S,] vector, total income taxes paid
-    cons = [S,] vector, household consumption
-    RETURNS: 2Sx1 list of euler errors
-    OUTPUT: None
+    rpath     = (p,) vector, time path of interest rates over remaining
+                lifetime
+    wpath     = (p,) vector, time path of wages over remaining lifetime
+    b_init    = scalar, initial wealth
+    p         = integer >= 1, number of periods remaining in lifetime
+    beta      = scalar in (0,1), discount factor
+    sigma     = scalar > 0, coefficient of relative risk aversion
+    l_tilde   = scalar > 0, per-period time endowment for every agent
+    chi_n_vec = (p,) vector, values for chi^n_s for remaining lifetime
+    b_ellip   = scalar > 0, fitted value of b for elliptical disutility
+                of labor
+    upsilon   = scalar > 1, fitted value of upsilon for elliptical
+                disutility of labor
+    b_sp1_vec = (p-1,) vector, savings over remaining lifetime
+    n_vec     = (p,) vector, labor supply over remaining lifetime
+    b_s_vec   = (p-1,) vector, wealth over remaining lifetime
+    n_args    = length 8 tuple, args to pass into hh.get_n_errors()
+    n_errors  = (p,) vector, remaining lifetime labor supply Euler
+                errors
+    b_args    = length 3 tuple, args to pass into hh.get_b_errors()
+    b_errors  = (p-1,) vector, remaining lifetime savings Euler errors
+    bn_errors = (2p-1,) vector, remaining lifetime savings and labor
+                supply Euler errors
+
+    FILES CREATED BY THIS FUNCTION: None
+
+    RETURNS: bn_errors
     --------------------------------------------------------------------
     '''
-    (r, w, S, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec,
-        diff) = args
-    b_guess = np.append(np.array(guesses[:S - 1]), 0.0)
-    n_guess = np.array(guesses[S - 1:])
-    b_s = np.array([0] + list(b_guess[:-1]))
-    b_splus1 = b_guess
+    (rpath, wpath, b_init, p, beta, sigma, l_tilde, chi_n_vec, b_ellip,
+        upsilon, diff) = args
+    b_sp1_vec = np.append(bn_vec[:p - 1], 0.0)
+    n_vec = bn_vec[p - 1:]
+    b_s_vec = np.append(b_init, b_sp1_vec[:-1])
+    c_vec = get_cons(rpath, wpath, b_s_vec, b_sp1_vec, n_vec)
+    n_args = (wpath, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff,
+              c_vec)
+    n_errors = get_n_errors(n_vec, *n_args)
+    b_args = (beta, sigma, diff)
+    b_errors = get_b_errors(c_vec, rpath[1:p], b_args)
+    bn_errors = np.hstack((b_errors, n_errors))
 
-    cons = get_cons(r, w, b_s, b_splus1, n_guess)
-    b_params = (beta, sigma)
-    error1 = get_b_errors(b_params, r, cons, diff)
-
-    n_args = (w, cons, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff)
-    error2 = get_n_errors(n_guess, n_args)
-
-    return list(error1.flatten()) + list(error2.flatten())
+    return bn_errors
 
 
-def get_cnb_vecs(c_init, rpath, wpath, params):
+def get_cnb_vecs(c_init, rpath, wpath, args):
     '''
     --------------------------------------------------------------------
     Generate lifetime consumption vector for individual given a guess
@@ -560,19 +577,20 @@ def get_cnb_vecs(c_init, rpath, wpath, params):
     c_init = scalar > 0, consumption in initial period of lifetime c_{S-p+1}
     rpath  = (p,) vector, path of interest rates over lifetime
     wpath  = (p,) vector, path of wages over lifetime
-    params = length 8 tuple, (b_init, beta, sigma, l_tilde, b_ellip,
+    args   = length 8 tuple, (b_init, beta, sigma, l_tilde, b_ellip,
              upsilon, chi_n_vec, diff)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        get_n_s()
+        get_n_errors()
+        get_b_errors()
 
     OBJECTS CREATED WITHIN FUNCTION:
     b_init    = scalar, initial wealth b_{S-p+1}
     beta      = scalar in (0, 1), discount factor
     sigma     = scalar >= 1, coefficient of relative risk aversion
+    l_tilde   = scalar > 0, per-period time endowment for every agent
     b_ellip   = scalar > 0, fitted value of b for elliptical disutility
                 of labor
-    l_tilde   = scalar > 0, per-period time endowment for every agent
     upsilon   = scalar > 1, fitted value of upsilon for elliptical
                 disutility of labor
     chi_n_vec = (p,) vector, values for chi^n_s over remaining lifetime
@@ -585,20 +603,23 @@ def get_cnb_vecs(c_init, rpath, wpath, params):
     bvec      = (p,) vector, household lifetime savings given c_{S-p+1}
                 and b_{S-p+1} where b1=0
     per       = integer >= 1, index of period number
+    n_options = length 1 dict, options for opt.root(get_n_s,...)
     n_args    = length 8 tuple, (c_s, w_t, sigma, l_tilde, chi_n_s,
                 b_ellip, upsilon, diff)
-    n_options = length 1 dict, options for opt.root(get_n_s,...)
     result_n  = results object, solution from opt.root(get_n_s,...)
+    n_errors  = (p,) vector, labor supply Euler errors
+    b_args    = length 3 tuple, (beta, sigma, diff)
+    b_errors  = (p-1,) vector, savings Euler errors
     b_Sp1     = scalar, savings after the last period of life. Should be
                 zero in equilibrium
 
     FILES CREATED BY THIS FUNCTION: None
 
-    RETURNS: cvec, nvec, bvec, b_Sp1
+    RETURNS: cvec, nvec, bvec, b_Sp1, n_errors, b_errors
     --------------------------------------------------------------------
     '''
     (b_init, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec,
-        diff) = params
+        diff) = args
     p = rpath.shape[0]
     cvec = np.zeros(p)
     nvec = np.zeros(p)
@@ -613,19 +634,23 @@ def get_cnb_vecs(c_init, rpath, wpath, params):
             cvec[per] = cvec[per - 1] * ((beta * (1 + rpath[per])) **
                                          (1 / sigma))
         n_options = {'maxiter': 500}
-        n_args = [wpath[per], cvec[per], sigma, l_tilde, chi_n_vec[per],
-                  b_ellip, upsilon, diff]
+        n_args = (wpath[per], sigma, l_tilde, chi_n_vec[per], b_ellip,
+                  upsilon, diff, cvec[per])
         result_n = \
             opt.root(get_n_errors, l_tilde / 2, args=(n_args),
                      method='lm', tol=1e-14, options=(n_options))
-
         nvec[per] = result_n.x
+    n_args = (wpath, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, diff,
+              cvec)
+    n_errors = get_n_errors(nvec, *n_args)
+    b_args = (beta, sigma, diff)
+    b_errors = get_b_errors(cvec, rpath[1:], b_args)
     b_Sp1 = (1 + rpath[-1]) * bvec[-1] + wpath[-1] * nvec[-1] - cvec[-1]
 
-    return cvec, nvec, bvec, b_Sp1
+    return cvec, nvec, bvec, b_Sp1, n_errors, b_errors
 
 
-def c1_bSp1err(c_init, *args):
+def c1_bSp1err(c1_init, *args):
     '''
     --------------------------------------------------------------------
     Given value for c1, as well as w and r, solve for household
@@ -634,15 +659,16 @@ def c1_bSp1err(c_init, *args):
     savings amount b_{S+1} should be zero in equilibrium.
     --------------------------------------------------------------------
     INPUTS:
-    c_init = scalar > 0, assumed initial period consumption for
-             individual
-    args   = length 10 tuple, (b_init, beta, sigma, l_tilde, b_ellip,
-             upsilon, chi_n_vec, rpath, wpath, diff)
+    c1_init = scalar > 0, assumed initial period consumption for
+              individual
+    args    = length 10 tuple, (b_init, beta, sigma, l_tilde, b_ellip,
+              upsilon, chi_n_vec, rpath, wpath, diff)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
         get_cnb_vecs()
 
     OBJECTS CREATED WITHIN FUNCTION:
+    b_init    = scalar, initial period wealth
     beta      = scalar in (0, 1), discount factor
     sigma     = scalar >= 1, coefficient of relative risk aversion
     b_ellip   = scalar > 0, fitted value of b for elliptical disutility
@@ -664,6 +690,9 @@ def c1_bSp1err(c_init, *args):
                 period after last period of life based on c_{S-p+1},
                 Euler equations, and budget constraints. b_Sp1 should be
                 zero in equilibrium
+    n_errors  = (p,) vector, remaining lifetime labor supply Euler
+                errors
+    b_errors  = (p-1,) vector, remaining lifetime savings Euler errors
 
     FILES CREATED BY THIS FUNCTION: None
 
@@ -674,7 +703,7 @@ def c1_bSp1err(c_init, *args):
         wpath, diff) = args
     cnb_args = (b_init, beta, sigma, l_tilde, b_ellip, upsilon,
                 chi_n_vec, diff)
-    cvec, nvec, bvec, b_Sp1 = get_cnb_vecs(c_init, rpath, wpath,
-                                           cnb_args)
+    cvec, nvec, bvec, b_Sp1, n_errors, b_errors = \
+        get_cnb_vecs(c1_init, rpath, wpath, cnb_args)
 
     return b_Sp1

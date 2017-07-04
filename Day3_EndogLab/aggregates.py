@@ -29,6 +29,19 @@ def get_L(narr):
     --------------------------------------------------------------------
     Solve for steady-state aggregate labor L or time path of aggregate
     labor L_t
+
+    We have included a stitching function for L when L<=epsilon such
+    that the the adjusted value is the following. Let sum(n_i) = X.
+    Market clearing is usually given by L = X:
+
+    L = X when X >= epsilon
+      = f(X) = a * exp(b * X) when X < epsilon
+                   where a = epsilon / e  and b = 1 / epsilon
+
+    This function has the properties that
+    (i) f(X)>0 and f'(X) > 0 for all X,
+    (ii) f(eps) = eps (i.e., functions X and f(X) meet at epsilon)
+    (iii) f'(eps) = 1 (i.e., slopes of X and f(X) are equal at epsilon)
     --------------------------------------------------------------------
     INPUTS:
     narr = (S,) vector or (S, T_S-1) matrix, values for steady-state
@@ -38,19 +51,39 @@ def get_L(narr):
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION: None
 
     OBJECTS CREATED WITHIN FUNCTION:
-    L = scalar > 0, aggregate labor
+    epsilon = scalar > 0, small value at which stitch f(K) function
+    a       = scalar > 0, scale parameter on stitching function
+    b       = scalar > 0, coefficient on X in exponent of stitching
+              function
+    L       = scalar > 0, aggregate labor
+    L_cstr  = boolean or (T+S-2,) boolean vector, =True if L <= epsilon
+              or if L_t <= epsilon
 
     FILES CREATED BY THIS FUNCTION: None
 
-    RETURNS: L
+    RETURNS: L, L_cstr
     --------------------------------------------------------------------
     '''
+    epsilon = 0.1
+    a = epsilon / np.exp(1)
+    b = 1 / epsilon
     if narr.ndim == 1:  # This is the steady-state case
         L = narr.sum()
+        L_cstr = L < epsilon
+        if L_cstr:
+            print('get_L() warning: distribution of labor supply ' +
+                  'and/or parameters created L < epsilon')
+            # Force L > 0 by stitching a * exp(b * L) for L < eps
+            L = a * np.exp(b * L)
     elif narr.ndim == 2:  # This is the time path case
         L = narr.sum(axis=0)
+        L_cstr = L < epsilon
+        if L.min() < epsilon:
+            print('Aggregate labor constraint is violated ' +
+                  '(L_t < epsilon) for some period in time path.')
+            L[L_cstr] = a * np.exp(b * L[L_cstr])
 
-    return L
+    return L, L_cstr
 
 
 def get_K(barr):
@@ -81,13 +114,17 @@ def get_K(barr):
 
     OBJECTS CREATED WITHIN FUNCTION:
     epsilon = scalar > 0, small value at which stitch f(K) function
+    a       = scalar > 0, scale parameter on stitching function
+    b       = scalar > 0, coefficient on X in exponent of stitching
+              function
     K       = scalar or (T+S-2,) vector, steady-state aggregate capital
               stock or time path of aggregate capital stock
-    K_cnstr = Boolean or (T+S-2) Boolean, =True if K <= 0 or if K_t <= 0
+    K_cstr  = boolean or (T+S-2) boolean vector, =True if K <= epsilon
+              or if K_t <= epsilon
 
     FILES CREATED BY THIS FUNCTION: None
 
-    RETURNS: K, K_cnstr
+    RETURNS: K, K_cstr
     --------------------------------------------------------------------
     '''
     epsilon = 0.1
@@ -95,45 +132,45 @@ def get_K(barr):
     b = 1 / epsilon
     if barr.ndim == 1:  # This is the steady-state case
         K = barr.sum()
-        K_cnstr = K < epsilon
-        if K_cnstr:
+        K_cstr = K < epsilon
+        if K_cstr:
             print('get_K() warning: distribution of savings and/or ' +
                   'parameters created K < epsilon')
-            # Force K >= eps by stitching a * exp(b * K) for K < eps
+            # Force K > 0 by stitching a * exp(b * K) for K < eps
             K = a * np.exp(b * K)
 
     elif barr.ndim == 2:  # This is the time path case
         K = barr.sum(axis=0)
-        K_cnstr = K < epsilon
+        K_cstr = K < epsilon
         if K.min() < epsilon:
             print('Aggregate capital constraint is violated ' +
-                  '(K < epsilon) for some period in time path.')
-            K[K_cnstr] = a * np.exp(b * K[K_cnstr])
+                  '(K_t < epsilon) for some period in time path.')
+            K[K_cstr] = a * np.exp(b * K[K_cstr])
 
-    return K, K_cnstr
+    return K, K_cstr
 
 
-def get_Y(params, K, L):
+def get_Y(K, L, params):
     '''
     --------------------------------------------------------------------
     Solve for steady-state aggregate output Y or time path of aggregate
     output Y_t
     --------------------------------------------------------------------
     INPUTS:
-    params = length 2 tuple, production function parameters
-             (A, alpha)
-    A      = scalar > 0, total factor productivity
-    alpha  = scalar in (0,1), capital share of income
     K      = scalar > 0 or (T+S-2,) vector, aggregate capital stock
              or time path of the aggregate capital stock
     L      = scalar > 0 or (T+S-2,) vector, aggregate labor or time
              path of the aggregate labor
+    params = length 2 tuple, production function parameters
+             (A, alpha)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION: None
 
     OBJECTS CREATED WITHIN FUNCTION:
-    Y = scalar > 0 or (T+S-2,) vector, aggregate output (GDP) or
-        time path of aggregate output (GDP)
+    A      = scalar > 0, total factor productivity
+    alpha  = scalar in (0,1), capital share of income
+    Y      = scalar > 0 or (T+S-2,) vector, aggregate output (GDP) or
+             time path of aggregate output (GDP)
 
     FILES CREATED BY THIS FUNCTION: None
 
