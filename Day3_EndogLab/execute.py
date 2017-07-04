@@ -13,8 +13,7 @@ This Python script imports the following module(s):
 
 This Python script calls the following function(s):
     elp.fit_ellip_CFE()
-    ss.get_SS_root()
-    ss.get_SS_bsct()
+    ss.get_SS()
     utils.compare_args()
     aggr.get_K()
     tpi.get_TPI()
@@ -40,45 +39,45 @@ import utilities as utils
 ------------------------------------------------------------------------
 Declare parameters
 ------------------------------------------------------------------------
-S             = integer in [3,80], number of periods an individual lives
-beta_annual   = scalar in (0,1), discount factor for one year
-beta          = scalar in (0,1), discount factor for each model period
-sigma         = scalar > 0, coefficient of relative risk aversion
-l_tilde       = scalar > 0, per-period time endowment for every agent
-chi_n_vec     = (S,) vector, values for chi^n_s
-A             = scalar > 0, total factor productivity parameter in
-                firms' production function
-alpha         = scalar in (0,1), capital share of income
-delta_annual  = scalar in [0,1], one-year depreciation rate of capital
-delta         = scalar in [0,1], model-period depreciation rate of
-                capital
-SS_solve      = boolean, =True if want to solve for steady-state
-                solution, otherwise retrieve solutions from pickle
-SS_tol        = scalar > 0, tolerance level for steady-state fsolve
-SS_graphs     = boolean, =True if want graphs of steady-state objects
-SS_EulDiff    = boolean, =True if use simple differences in Euler
-                errors. Otherwise, use percent deviation form.
-SS_outer_root = boolean, =True if use root finder to solve outer loop
-                zeros for rss and wss
-KL_outer      = boolean, =True if guess K and L in outer loop.
-                Otherwise, guess r and w in outer loop
-hh_fsolve     = boolean, =True if solve inner-loop household problem by
-                choosing c_1 to set final period savings b_{S+1}=0.
-                Otherwise, solve the household problem as multivariate
-                root finder with 2S-1 unknowns and equations
-T1            = integer > S, number of time periods until steady state
-                is assumed to be reached
-T2            = integer > T1, number of time periods after which steady-
-                state is forced in TPI
-TPI_solve     = boolean, =True if want to solve TPI after solving SS
-TPI_tol       = scalar > 0, tolerance level for fsolve's in TPI
-maxiter_TPI   = integer >= 1, Maximum number of iterations for TPI
-mindist_TPI   = scalar > 0, Convergence criterion for TPI
-xi            = scalar in (0,1], TPI path updating parameter
-TPI_graphs    = Boolean, =True if want graphs of TPI objects
-TPI_EulDiff   = Boolean, =True if want difference version of Euler
-                errors beta*(1+r)*u'(c2) - u'(c1), =False if want ratio
-                version [beta*(1+r)*u'(c2)]/[u'(c1)] - 1
+S              = integer in [3,80], number of periods an individual
+                 lives
+beta_annual    = scalar in (0,1), discount factor for one year
+beta           = scalar in (0,1), discount factor for each model period
+sigma          = scalar > 0, coefficient of relative risk aversion
+l_tilde        = scalar > 0, per-period time endowment for every agent
+chi_n_vec      = (S,) vector, values for chi^n_s
+A              = scalar > 0, total factor productivity parameter in
+                 firms' production function
+alpha          = scalar in (0,1), capital share of income
+delta_annual   = scalar in [0,1], one-year depreciation rate of capital
+delta          = scalar in [0,1], model-period depreciation rate of
+                 capital
+SS_solve       = boolean, =True if want to solve for steady-state
+                 solution, otherwise retrieve solutions from pickle
+SS_EulTol      = scalar > 0, tolerance level for steady-state inner-loop
+                 root finder
+SS_graphs      = boolean, =True if want graphs of steady-state objects
+SS_EulDiff     = boolean, =True if use simple differences in Euler
+                 errors. Otherwise, use percent deviation form.
+xi_SS          = scalar in (0, 1], SS updating parameter in outer-loop
+                 bisection method
+SS_maxiter     = integer >= 1, maximum iterations of outer-loop steady-
+                 state bisection method
+T1             = integer > S, number of time periods until steady state
+                 is assumed to be reached
+T2             = integer > T1, number of time periods after which
+                 steady state is forced in TPI
+TPI_solve      = boolean, =True if want to solve TPI after solving SS
+TPI_OutTol     = scalar > 0, tolerance level for outer-loop bisection
+                 method in TPI
+TPI_InTol      = scalar > 0, tolerance level for inner-loop root finder
+                 in each iteration of TPI
+maxiter_TPI    = integer >= 1, Maximum number of iterations for TPI
+xi             = scalar in (0,1], TPI path updating parameter
+TPI_graphs     = boolean, =True if want graphs of TPI objects
+TPI_EulDiff    = boolean, =True if want difference version of Euler
+                 errors beta*(1+r)*u'(c2) - u'(c1), =False if want ratio
+                 version [beta*(1+r)*u'(c2)]/[u'(c1)] - 1
 ------------------------------------------------------------------------
 '''
 # Household parameters
@@ -95,20 +94,20 @@ delta_annual = 0.05
 delta = 1 - ((1 - delta_annual) ** (80 / S))
 # SS parameters
 SS_solve = True
-SS_tol = 1e-13
+SS_BsctTol = 1e-13
+SS_EulTol = 1e-13
 SS_graphs = True
 SS_EulDiff = True
-SS_outer_root = False
-KL_outer = False
-hh_fsolve = True
+xi_SS = 0.15
+SS_maxiter = 200
 # TPI parameters
 T1 = int(round(2.0 * S))
 T2 = int(round(2.5 * S))
 TPI_solve = True
-TPI_tol = 1e-13
+TPI_OutTol = 1e-13
+TPI_InTol = 1e-13
 maxiter_TPI = 200
-mindist_TPI = 1e-13
-xi = 0.20
+xi_TPI = 0.30
 TPI_graphs = True
 TPI_EulDiff = True
 
@@ -151,23 +150,20 @@ ss_output_fldr = string, cur_path extension of SS output folder path
 ss_output_dir  = string, full path name of SS output folder
 ss_outputfile  = string, path name of file for SS output objects
 ss_paramsfile  = string, path name of file for SS parameter objects
-Kss_init       = scalar > 0, initial guess for K_ss
-Lss_init       = scalar > 0, initial guess for L_ss
-rss_init       = scalar > 0, initial guess for r_ss
-wss_init       = scalar > 0, initial guess for w_ss
+ss_args        = length 15 tuple, arguments to pass in to ss.get_SS()
+rss_init       = scalar > -delta, initial guess for r_ss
 c1_init        = scalar > 0, initial guess for c1
-init_vals      = length 5 tuple, initial values to be passed in to
-                 get_SS_root() or get_SS_bsct()
-ss_args        = length 14 tuple, args to be passed in to get_SS()
+init_vals      = length 2 tuple, initial guesses (r, c1) to be passed
+                 in to ss.get_SS
 ss_output      = length 14 dict, steady-state objects {n_ss, b_ss, c_ss,
                  b_Sp1_ss, w_ss, r_ss, K_ss, L_ss, Y_ss, C_ss, n_err_ss,
                  b_err_ss, RCerr_ss, ss_time}
 ss_vars_exst   = boolean, =True if ss_vars.pkl exists
 ss_args_exst   = boolean, =True if ss_args.pkl exists
 err_msg        = string, error message
-cur_ss_args    = length 14 tuple, current args to be passed in to
-                 get_SS()
-args_same      = boolean, =True if ss_args == cur_ss_args
+prev_ss_args   = length 12 tuple, previous arguments used to produce
+                 saved steady-state output
+args_same      = boolean, =True if ss_args == prev_ss_args
 ------------------------------------------------------------------------
 '''
 # Create OUTPUT/SS directory if does not already exist
@@ -180,24 +176,18 @@ ss_outputfile = os.path.join(ss_output_dir, 'ss_vars.pkl')
 ss_paramsfile = os.path.join(ss_output_dir, 'ss_args.pkl')
 
 # Compute steady-state solution
+ss_args = (S, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec, A,
+           alpha, delta, SS_BsctTol, SS_EulTol, SS_EulDiff, xi_SS,
+           SS_maxiter)
+
 if SS_solve:
     print('BEGIN EQUILIBRIUM STEADY-STATE COMPUTATION')
-
-    Kss_init = 10.0
-    Lss_init = 10.0
-    rss_init = 0.05
-    wss_init = 1.2
+    rss_init = 0.06
     c1_init = 0.1
-    init_vals = (Kss_init, Lss_init, rss_init, wss_init, c1_init)
-    ss_args = (S, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec,
-               A, alpha, delta, SS_tol, SS_EulDiff, hh_fsolve, KL_outer)
+    init_vals = (rss_init, c1_init)
 
-    if SS_outer_root:
-        print('Solving SS outer loop using root finder.')
-        ss_output = ss.get_SS_root(init_vals, ss_args, SS_graphs)
-    else:
-        print('Solving SS outer loop using bisection method.')
-        ss_output = ss.get_SS_bsct(init_vals, ss_args, SS_graphs)
+    print('Solving SS outer loop using bisection method on r.')
+    ss_output = ss.get_SS(init_vals, ss_args, SS_graphs)
 
     # Save ss_output as pickle
     pickle.dump(ss_output, open(ss_outputfile, 'wb'))
@@ -219,13 +209,9 @@ else:
         # If the files do exist, make sure that none of the parameters
         # changed from the parameters used in the solution for the saved
         # steady-state pickle
-        ss_args = pickle.load(open(ss_paramsfile, 'rb'))
+        prev_ss_args = pickle.load(open(ss_paramsfile, 'rb'))
 
-        cur_ss_args = (S, beta, sigma, l_tilde, b_ellip, upsilon,
-                       chi_n_vec, A, alpha, delta, SS_tol, SS_EulDiff,
-                       hh_fsolve, KL_outer)
-
-        args_same = utils.compare_args(ss_args, cur_ss_args)
+        args_same = utils.compare_args(ss_args, prev_ss_args)
         if args_same:
             # If none of the parameters changed, use saved pickle
             print('RETRIEVE STEADY-STATE SOLUTIONS FROM FILE')
@@ -247,21 +233,25 @@ tpi_output_fldr = string, cur_path extension of TPI output folder path
 tpi_output_dir  = string, full path name of TPI output folder
 tpi_outputfile  = string, path name of file for TPI output objects
 tpi_paramsfile  = string, path name of file for TPI parameter objects
+r_ss            = scalar > 0, steady-state aggregate interest rate
 K_ss            = scalar > 0, steady-state aggregate capital stock
 L_ss            = scalar > 0, steady-state aggregate labor
 C_ss            = scalar > 0, steady-state aggregate consumption
 b_ss            = (S,) vector, steady-state savings distribution
+                  (b1, b2,... bS)
+n_ss            = (S,) vector, steady-state labor supply distribution
+                  (n1, n2,... nS)
 init_wgts       = (S,) vector, weights representing the factor by which
                   the initial wealth distribution differs from the
                   steady-state wealth distribution
 bvec1           = (S,) vector, initial period savings distribution
 K1              = scalar, initial period aggregate capital stock
-K1_cnstr        = Boolean, =True if K1 <= 0
-tpi_params      = length 20 tuple, args to pass into c7tpf.get_TPI()
+K1_cstr         = boolean, =True if K1 <= 0
+tpi_params      = length 23 tuple, args to pass into c7tpf.get_TPI()
 tpi_output      = length 14 dictionary, {cpath, npath, bpath, wpath,
                   rpath, Kpath, Lpath, Ypath, Cpath, bSp1_err_path,
                   b_err_path, n_err_path, RCerrPath, tpi_time}
-tpi_args        = length 21 tuple, args that were passed in to get_TPI()
+tpi_args        = length 24 tuple, args that were passed in to get_TPI()
 ------------------------------------------------------------------------
 '''
 if TPI_solve:
@@ -276,37 +266,37 @@ if TPI_solve:
     tpi_outputfile = os.path.join(tpi_output_dir, 'tpi_vars.pkl')
     tpi_paramsfile = os.path.join(tpi_output_dir, 'tpi_args.pkl')
 
+    r_ss = ss_output['r_ss']
     K_ss = ss_output['K_ss']
     L_ss = ss_output['L_ss']
     C_ss = ss_output['C_ss']
-    b_s_ss = ss_output['b_s_ss']
+    b_ss = ss_output['b_ss']
     n_ss = ss_output['n_ss']
 
     # Choose initial period distribution of wealth (bvec1), which
     # determines initial period aggregate capital stock
-    b_s_ss = ss_output['b_s_ss']
     init_wgts = ((1.5 - 0.87) / (S - 1) *
                  (np.linspace(1, S, S) - 1) + 0.87)
-    bvec1 = init_wgts * b_s_ss
+    bvec1 = init_wgts * b_ss
 
     # Make sure init. period distribution is feasible in terms of K
-    K1, K1_cnstr = aggr.get_K(bvec1)
+    K1, K1_cstr = aggr.get_K(bvec1)
 
     # If initial bvec1 is not feasible end program
-    if K1_cnstr:
+    if K1_cstr:
         print('Initial savings distribution is not feasible because ' +
               'K1<=0. Some element(s) of bvec1 must increase.')
     else:
         tpi_params = (S, T1, T2, beta, sigma, l_tilde, b_ellip, upsilon,
-                      chi_n_vec, A, alpha, delta, K_ss, L_ss, C_ss,
-                      b_s_ss, n_ss, maxiter_TPI, mindist_TPI, TPI_tol, xi,
-                      TPI_EulDiff, hh_fsolve)
-        tpi_output = tpi.get_TPI(tpi_params, bvec1, TPI_graphs)
+                      chi_n_vec, A, alpha, delta, r_ss, K_ss, L_ss, C_ss,
+                      b_ss, n_ss, maxiter_TPI, TPI_OutTol, TPI_InTol,
+                      TPI_EulDiff, xi_TPI)
+        tpi_output = tpi.get_TPI(bvec1, tpi_params, TPI_graphs)
 
         tpi_args = (S, T1, T2, beta, sigma, l_tilde, b_ellip, upsilon,
-                    chi_n_vec, A, alpha, delta, K_ss, L_ss, C_ss,
-                    b_s_ss, n_ss, maxiter_TPI, mindist_TPI, TPI_tol, xi,
-                    TPI_EulDiff, bvec1, hh_fsolve)
+                    chi_n_vec, A, alpha, delta, r_ss, K_ss, L_ss, C_ss,
+                    b_ss, n_ss, maxiter_TPI, TPI_OutTol, TPI_InTol,
+                    TPI_EulDiff, xi_TPI, bvec1)
 
         # Save tpi_output as pickle
         pickle.dump(tpi_output, open(tpi_outputfile, 'wb'))

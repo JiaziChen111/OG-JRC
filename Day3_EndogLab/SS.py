@@ -12,10 +12,7 @@ This Python module imports the following module(s):
 
 This Python module defines the following function(s):
     inner_loop()
-    rw_errs()
-    KL_errs()
-    get_SS_root()
-    get_SS_bsct()
+    get_SS()
     create_graphs()
 ------------------------------------------------------------------------
 '''
@@ -38,21 +35,20 @@ import utilities as utils
 '''
 
 
-def inner_loop(r, w, params):
+def inner_loop(r, w, args):
     '''
     --------------------------------------------------------------------
     Given values for r and w, solve for equilibrium errors from the two
     first order conditions of the firm
     --------------------------------------------------------------------
     INPUTS:
-    params = length 14 tuple, (c1_init, S, beta, sigma, l_tilde, b_ellip,
-                            upsilon, chi_n_vec, A, alpha, delta, diff,
-                            hh_fsolve, SS_tol)
-    r      = scalar > 0, guess at steady-state interest rate
-    w      = scalar > 0, guess at steady-state wage
+    r    = scalar > 0, guess at steady-state interest rate
+    w    = scalar > 0, guess at steady-state wage
+    args = length 14 tuple, (c1_init, S, beta, sigma, l_tilde, b_ellip,
+           upsilon, chi_n_vec, A, alpha, delta, EulDiff, Eul_Tol,
+           c1_options)
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        hh.bn_solve()
         hh.c1_bSp1err()
         hh.get_cnb_vecs()
         aggr.get_K()
@@ -76,17 +72,13 @@ def inner_loop(r, w, params):
     alpha      = scalar in (0,1), capital share of income
     delta      = scalar in [0,1], model-period depreciation rate of
                  capital
-    diff       = boolean, =True if simple difference Euler errors,
+    EulDiff    = boolean, =True if simple difference Euler errors,
                  otherwise percent deviation Euler errors
-    hh_fsolve  = boolean, =True if solve inner-loop household problem by
-                 choosing c_1 to set final period savings b_{S+1}=0.
-                 Otherwise, solve the household problem as multivariate
-                 root finder with 2S-1 unknowns and equations
     SS_tol     = scalar > 0, tolerance level for steady-state fsolve
+    c1_options = length 1 dict, options for c1_bSp1err()
     rpath      = (S,) vector, lifetime path of interest rates
     wpath      = (S,) vector, lifetime path of wages
-    c1_args    = length 10 tuple, args to pass into c1_bSp1err()
-    c1_options = length 1 dict, options for c1_bSp1err()
+    c1_args    = length 10 tuple, args to pass into hh.c1_bSp1err()
     results_c1 = results object, results from c1_bSp1err()
     c1         = scalar > 0, optimal initial period consumption given r
                  and w
@@ -95,9 +87,12 @@ def inner_loop(r, w, params):
     nvec       = (S,) vector, lifetime labor supply (n1, n2, ...nS)
     bvec       = (S,) vector, lifetime savings (b1, b2, ...bS) with b1=0
     b_Sp1      = scalar, final period savings, should be close to zero
+    n_errors   = (S,) vector, labor supply Euler errors
+    b_errors   = (S-1,) vector, savings Euler errors
     K          = scalar > 0, aggregate capital stock
-    K_cnstr    = boolean, =True if K < 0
+    K_cstr     = boolean, =True if K < epsilon
     L          = scalar > 0, aggregate labor
+    L_cstr     = boolean, =True if L < epsilon
     r_params   = length 3 tuple, (A, alpha, delta)
     w_params   = length 2 tuple, (A, alpha)
     r_new      = scalar > 0, guess at steady-state interest rate
@@ -105,84 +100,67 @@ def inner_loop(r, w, params):
 
     FILES CREATED BY THIS FUNCTION: None
 
-    RETURNS: K, L, cvec, nvec, b_s_vec, b_splus1_vec, b_Sp1, r_new, w_new
+    RETURNS: K, L, cvec, nvec, bvec, b_Sp1, r_new, w_new, n_errors,
+             b_errors
     --------------------------------------------------------------------
     '''
-    c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,\
-        chi_n_vec, A, alpha, delta, diff, hh_fsolve, SS_tol = params
+    (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec, A,
+        alpha, delta, EulDiff, SS_tol, c1_options) = args
 
-    if hh_fsolve:
-        b_init = np.ones((S - 1, 1)) * 0.05
-        n_init = np.ones((S, 1)) * 0.4
-        guesses = np.append(b_init, n_init)
-        bn_params = (r, w, S, beta, sigma, l_tilde, b_ellip,
-                     upsilon, chi_n_vec, diff)
-        [solutions, infodict, ier, message] = \
-            opt.fsolve(hh.bn_solve, guesses, args=bn_params,
-                       xtol=SS_tol, full_output=True)
-        euler_errors = infodict['fvec']
-        print('Max Euler errors: ', np.absolute(euler_errors).max())
-        b_splus1_vec = np.append(solutions[:S - 1], 0.0)
-        nvec = solutions[S - 1:]
-        b_s_vec = np.append(0.0, b_splus1_vec[:-1])
-        b_Sp1 = 0.0
-        cvec = hh.get_cons(r, w, b_s_vec, b_splus1_vec, nvec)
-    else:
-        rpath = r * np.ones(S)
-        wpath = w * np.ones(S)
-        c1_args = (0.0, beta, sigma, l_tilde, b_ellip, upsilon,
-                   chi_n_vec, rpath, wpath, diff)
-        c1_options = {'maxiter': 500}
-        results_c1 = \
-            opt.root(hh.c1_bSp1err, c1_init, args=(c1_args),
-                     method='lm', tol=1e-14, options=(c1_options))
-        c1 = results_c1.x
-        cnb_args = (0.0, beta, sigma, l_tilde, b_ellip, upsilon,
-                    chi_n_vec, diff)
-        cvec, nvec, b_s_vec, b_Sp1 = hh.get_cnb_vecs(c1, rpath, wpath,
-                                                  cnb_args)
-        b_splus1_vec = np.append(b_s_vec[1:],b_Sp1)
-
-    K, K_cnstr = aggr.get_K(b_s_vec)
-    L = aggr.get_L(nvec)
-    #K = np.maximum(0.0001, K)
-    L = np.maximum(0.0001, L)
+    rpath = r * np.ones(S)
+    wpath = w * np.ones(S)
+    c1_args = (0.0, beta, sigma, l_tilde, b_ellip, upsilon,
+               chi_n_vec, rpath, wpath, EulDiff)
+    results_c1 = \
+        opt.root(hh.c1_bSp1err, c1_init, args=(c1_args),
+                 method='lm', tol=SS_tol, options=(c1_options))
+    c1 = results_c1.x
+    cnb_args = (0.0, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec,
+                EulDiff)
+    cvec, nvec, bvec, b_Sp1, n_errors, b_errors = \
+        hh.get_cnb_vecs(c1, rpath, wpath, cnb_args)
+    K, K_cstr = aggr.get_K(bvec)
+    L, L_cstr = aggr.get_L(nvec)
     r_params = (A, alpha, delta)
-    r_new = firms.get_r(r_params, K, L)
-    w_params = (A, alpha)
-    w_new = firms.get_w(w_params, K, L)
+    r_new = firms.get_r(K, L, r_params)
+    w_params = (A, alpha, delta)
+    w_new = firms.get_w(r_new, w_params)
 
-    return K, L, cvec, nvec, b_s_vec, b_splus1_vec, b_Sp1, r_new, w_new
+    return (K, L, cvec, nvec, bvec, b_Sp1, r_new, w_new, n_errors,
+            b_errors)
 
-def rw_errs(rwvec, *args):
+
+def get_SS(init_vals, args, graphs=False):
     '''
     --------------------------------------------------------------------
-    Given values for r and w, solve for equilibrium errors from the two
-    first order conditions of the firm
+    Solve for the steady-state solution of the S-period-lived agent OG
+    model with endogenous labor supply using the bisection method in K
+    and L for the outer loop
     --------------------------------------------------------------------
     INPUTS:
-    rwvec = (2,) vector, (r, w)
-    args  = length 14 tuple, (c1_init, S, beta, sigma, l_tilde, b_ellip,
-            upsilon, chi_n_vec, A, alpha, delta, diff, hh_fsolve,
-            SS_tol)
+    init_vals = length 2 tuple, (rss_init, c1_init)
+    args      = length 15 tuple, (S, beta, sigma, l_tilde, b_ellip,
+                upsilon, chi_n_vec, A, alpha, delta, Bsct_Tol, Eul_Tol,
+                EulDiff, xi, maxiter)
+    graphs    = boolean, =True if output steady-state graphs
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        hh.bn_solve()
-        hh.c1_bSp1err()
-        hh.get_cnb_vecs()
-        aggr.get_K()
-        aggr.get_L()
         firms.get_r()
         firms.get_w()
+        utils.print_time()
+        inner_loop()
+        creat_graphs()
 
     OBJECTS CREATED WITHIN FUNCTION:
-    r          = scalar > 0, guess at steady-state interest rate
-    w          = scalar > 0, guess at steady-state wage
-    c1_init    = scalar > 0, initial guess for c1
-    S          = integer >= 3, number of periods in individual lifetime
-    beta       = scalar in (0,1), discount factor
-    sigma      = scalar >= 1, coefficient of relative risk aversion
-    l_tilde    = scalar > 0, per-period time endowment for every agent
+    start_time = scalar > 0, clock time at beginning of program
+    r_init     = scalar > -delta, initial guess for steady-state
+                 interest rate
+    c1_init    = scalar > 0, initial guess for first period consumpt'n
+    S          = integer in [3, 80], number of periods an individual
+                 lives
+    beta       = scalar in (0,1), discount factor for each model per
+    sigma      = scalar > 0, coefficient of relative risk aversion
+    l_tilde    = scalar > 0, time endowment for each agent each period
     b_ellip    = scalar > 0, fitted value of b for elliptical disutility
                  of labor
     upsilon    = scalar > 1, fitted value of upsilon for elliptical
@@ -193,448 +171,59 @@ def rw_errs(rwvec, *args):
     alpha      = scalar in (0,1), capital share of income
     delta      = scalar in [0,1], model-period depreciation rate of
                  capital
-    diff       = boolean, =True if simple difference Euler errors,
-                 otherwise percent deviation Euler errors
-    hh_fsolve  = boolean, =True if solve inner-loop household problem by
-                 choosing c_1 to set final period savings b_{S+1}=0.
-                 Otherwise, solve the household problem as multivariate
-                 root finder with 2S-1 unknowns and equations
-    SS_tol     = scalar > 0, tolerance level for steady-state fsolve
-    rpath      = (S,) vector, lifetime path of interest rates
-    wpath      = (S,) vector, lifetime path of wages
-    c1_args    = length 10 tuple, args to pass into c1_bSp1err()
-    c1_options = length 1 dict, options for c1_bSp1err()
-    results_c1 = results object, results from c1_bSp1err()
-    c1         = scalar > 0, optimal initial period consumption given r
-                 and w
-    cnb_args   = length 8 tuple, args to pass into get_cnb_vecs()
-    cvec       = (S,) vector, lifetime consumption (c1, c2, ...cS)
-    nvec       = (S,) vector, lifetime labor supply (n1, n2, ...nS)
-    bvec       = (S,) vector, lifetime savings (b1, b2, ...bS) with b1=0
-    b_Sp1      = scalar, final period savings, should be close to zero
-    K          = scalar > 0, aggregate capital stock
-    K_cnstr    = boolean, =True if K < 0
-    L          = scalar > 0, aggregate labor
-    r_params   = length 3 tuple, (A, alpha, delta)
-    EulErr_K   = scalar, Euler error from firm FOC for K
-    w_params   = length 2 tuple, (A, alpha)
-    EulErr_L   = scalar, Euler error from firm FOC for L
-    rw_errors  = (2,) vector, ([EulErr_K, EulErr_L])
-
-    FILES CREATED BY THIS FUNCTION: None
-
-    RETURNS: rw_errors
-    --------------------------------------------------------------------
-    '''
-    r, w = rwvec
-    (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-        chi_n_vec, A, alpha, delta, diff, hh_fsolve, SS_tol) = args
-
-    if (r + delta < 0) or (w <= 0):
-        rw_errors = np.array([1e14, 1e14])
-    else:
-        inner_loop_params = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-            chi_n_vec, A, alpha, delta, diff, hh_fsolve, SS_tol)
-        K, L, cvec, nvec, b_s_vec, b_splus1_vec, b_Sp1, r_new, w_new\
-               = inner_loop(r, w, inner_loop_params)
-        EulErr_K = r - r_new
-        EulErr_L = w - w_new
-        rw_errors = np.array([EulErr_K, EulErr_L])
-
-        print('rw_errors: ', rw_errors)
-        print('rw: ', r, w)
-
-    return rw_errors
-
-
-def KL_errs(KLvec, *args):
-    '''
-    --------------------------------------------------------------------
-    Given values for w and r, solve for equilibrium errors from the two
-    first order conditions of the firm
-    --------------------------------------------------------------------
-    INPUTS:
-    rwvec = (2,) vector, (r, w)
-    args  = length 12 tuple, (c1_init, S, beta, sigma, l_tilde, b_ellip,
-            upsilon, chi_n_vec, A, alpha, delta, diff)
-
-    OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        hh.bn_solve()
-        hh.c1_bSp1err()
-        hh.get_cnb_vecs()
-        aggr.get_K()
-        aggr.get_L()
-        firms.get_r()
-        firms.get_w()
-
-    OBJECTS CREATED WITHIN FUNCTION:
-    r          = scalar > 0, guess at steady-state interest rate
-    w          = scalar > 0, guess at steady-state wage
-    c1_init    = scalar > 0, initial guess for c1
-    S          = integer >= 3, number of periods in individual lifetime
-    beta       = scalar in (0,1), discount factor
-    sigma      = scalar >= 1, coefficient of relative risk aversion
-    l_tilde    = scalar > 0, per-period time endowment for every agent
-    b_ellip    = scalar > 0, fitted value of b for elliptical disutility
-                 of labor
-    upsilon    = scalar > 1, fitted value of upsilon for elliptical
-                 disutility of labor
-    chi_n_vec  = (S,) vector, values for chi^n_s
-    A          = scalar > 0, total factor productivity parameter in
-                 firms' production function
-    alpha      = scalar in (0,1), capital share of income
-    delta      = scalar in [0,1], model-period depreciation rate of
-                 capital
-    diff       = boolean, =True if simple difference Euler errors,
-                 otherwise percent deviation Euler errors
-    rpath      = (S,) vector, lifetime path of interest rates
-    wpath      = (S,) vector, lifetime path of wages
-    c1_args    = length 10 tuple, args to pass into c1_bSp1err()
-    c1_options = length 1 dict, options for c1_bSp1err()
-    results_c1 = results object, results from c1_bSp1err()
-    c1         = scalar > 0, optimal initial period consumption given r
-                 and w
-    cnb_args   = length 8 tuple, args to pass into get_cnb_vecs()
-    cvec       = (S,) vector, lifetime consumption (c1, c2, ...cS)
-    nvec       = (S,) vector, lifetime labor supply (n1, n2, ...nS)
-    bvec       = (S,) vector, lifetime savings (b1, b2, ...bS) with b1=0
-    b_Sp1      = scalar, final period savings, should be close to zero
-    K          = scalar > 0, aggregate capital stock
-    K_cnstr    = boolean, =True if K < 0
-    L          = scalar > 0, aggregate labor
-    r_params   = length 3 tuple, (A, alpha, delta)
-    EulErr_K   = scalar, Euler error from firm FOC for K
-    w_params   = length 2 tuple, (A, alpha)
-    EulErr_L   = scalar, Euler error from firm FOC for L
-    rw_errors  = (2,) vector, ([EulErr_K, EulErr_L])
-
-    FILES CREATED BY THIS FUNCTION: None
-
-    RETURNS: rw_errors
-    --------------------------------------------------------------------
-    '''
-    K, L = KLvec
-    (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-        chi_n_vec, A, alpha, delta, diff, hh_fsolve, SS_tol) = args
-
-    if (K <= 0) or (L <= 0):
-        KL_errors = np.array([1e14, 1e14])
-    else:
-        r_params = (A, alpha, delta)
-        w_params = (A, alpha)
-        r = firms.get_r(r_params, K, L)
-        w = firms.get_w(w_params, K, L)
-
-        inner_loop_params = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-            chi_n_vec, A, alpha, delta, diff, hh_fsolve, SS_tol)
-        K_new, L_new, cvec, nvec, b_s_vec, b_splus1_vec, b_Sp1, r_new, w_new\
-               = inner_loop(r, w, inner_loop_params)
-
-        KL_errors = np.array([K - K_new, L - L_new])
-        print('KL_errors: ', KL_errors)
-
-    return KL_errors
-
-
-def get_SS_root(init_vals, args, graphs=False):
-    '''
-    --------------------------------------------------------------------
-    Solve for the steady-state solution of the S-period-lived agent OG
-    model with endogenous labor supply using the root finder in the
-    outer loop
-    --------------------------------------------------------------------
-    INPUTS:
-    init_vals = length 5 tuple,
-                (Kss_init, Lss_init, rss_init, wss_init, c1_init)
-    args      = length 14 tuple, (S, beta, sigma, l_tilde, b_ellip,
-                upsilon, chi_n_vec, A, alpha, delta, SS_tol, EulDiff,
-                hh_fsolve, KL_outer)
-    graphs    = boolean, =True if output steady-state graphs
-
-    OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        rw_errs()
-        hh.bn_solve()
-        hh.c1_bSp1err()
-        hh.get_cnb_vecs()
-        aggr.get_K()
-        aggr.get_L()
-        aggr.get_Y()
-        aggr.get_C()
-        hh.get_cons()
-        hh.get_n_errors()
-        hh.get_b_errors()
-        utils.print_time()
-
-    OBJECTS CREATED WITHIN FUNCTION:
-    start_time   = scalar > 0, clock time at beginning of program
-    Kss_init     = scalar > 0, initial guess for steady-state aggregate
-                   capital stock
-    Lss_init     = scalar > 0, initial guess for steady-state aggregate
-                   labor
-    rss_init     = scalar > 0, initial guess for steady-state interest
-                   rate
-    wss_init     = scalar > 0, initial guess for steady-state wage
-    c1_init      = scalar > 0, initial guess for first period consumpt'n
-    S            = integer in [3, 80], number of periods an individual
-                   lives
-    beta         = scalar in (0,1), discount factor for each model per
-    sigma        = scalar > 0, coefficient of relative risk aversion
-    l_tilde      = scalar > 0, time endowment for each agent each period
-    b_ellip      = scalar > 0, fitted value of b for elliptical
-                   disutility of labor
-    upsilon      = scalar > 1, fitted value of upsilon for elliptical
-                   disutility of labor
-    chi_n_vec    = (S,) vector, values for chi^n_s
-    A            = scalar > 0, total factor productivity parameter in
-                   firms' production function
-    alpha        = scalar in (0,1), capital share of income
-    delta        = scalar in [0,1], model-period depreciation rate of
-                   capital
-    SS_tol       = scalar > 0, tolerance level for steady-state fsolve
-    EulDiff      = Boolean, =True if want difference version of Euler
-                   errors beta*(1+r)*u'(c2) - u'(c1), =False if want
-                   ratio version [beta*(1+r)*u'(c2)]/[u'(c1)] - 1
-    hh_fsolve    = boolean, =True if solve inner-loop household problem
-                   by choosing c_1 to set final period savings b_{S+1}=0
-    KL_outer     = boolean, =True if guess K and L in outer loop.
-                   Otherwise, guess r and w in outer loop
-    rw_init      = (2,) vector, initial guesses for r_ss and w_ss
-    rw_args      = length 12 tuple, args to pass into rw_errs()
-    rw_options   = length 1 dict, options to pass into
-                   opt.root(rw_errs,...)
-    results_rw   = results object, root finder results from
-                   opt.root(rw_errs,...)
-    r_ss         = scalar > 0, steady-state interest rate
-    w_ss         = scalar > 0, steady-state wage
-    rpath        = (S,) vector, lifetime path of interest rates
-    wpath        = (S,) vector, lifetime path of wages
-    c1_args      = length 10 tuple, args to pass into c1_bSp1err()
-    c1_options   = length 1 dict, options to pass into
-                   opt.root(c1_bSp1err,...)
-    results_c1   = results object, root finder results from
-                   opt.root(c1_bSp1err,...)
-    c1_ss        = scalar > 0, steady-state consumption in first period
-    cnb_args     = length 8 tuple, args to pass into get_cnb_vecs()
-    c_ss         = (S,) vector, steady-state lifetime consumption
-    n_ss         = (S,) vector, steady-state lifetime labor supply
-    b_ss         = (S,) vector, steady-state lifetime savings
-                   (b1_ss, b2_ss, ...bS_ss) where b1_ss=0
-    b_Sp1_ss     = scalar, steady-state savings for period after last
-                   period of life. b_Sp1_ss approx. 0 in equilibrium
-    K_ss         = scalar > 0, steady-state aggregate capital stock
-    K_cnstr      = boolean, =True if K_ss <= 0
-    L_ss         = scalar > 0, steady-state aggregate labor
-    Y_params     = length 2 tuple, (A, alpha)
-    Y_ss         = scalar > 0, steady-state aggregate output (GDP)
-    C_ss         = scalar > 0, steady-state aggregate consumption
-    n_err_params = length 5 tuple, args to pass into get_n_errors()
-    n_err_ss     = (S,) vector, lifetime labor supply Euler errors
-    b_err_params = length 2 tuple, args to pass into get_b_errors()
-    b_err_ss     = (S) vector, lifetime savings Euler errors
-    RCerr_ss     = scalar, resource constraint error
-    ss_time      = scalar, seconds elapsed to run steady-state comput'n
-    ss_output    = length 14 dict, steady-state objects {n_ss, b_ss,
-                   c_ss, b_Sp1_ss, w_ss, r_ss, K_ss, L_ss, Y_ss, C_ss,
-                   n_err_ss, b_err_ss, RCerr_ss, ss_time}
-
-    FILES CREATED BY THIS FUNCTION:
-        None
-
-    RETURNS: ss_output
-    --------------------------------------------------------------------
-    '''
-    start_time = time.clock()
-    Kss_init, Lss_init, rss_init, wss_init, c1_init = init_vals
-    (S, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec, A, alpha,
-        delta, SS_tol, EulDiff, hh_fsolve, KL_outer) = args
-    if KL_outer:
-        KL_init = np.array([Kss_init, Lss_init])
-        KL_args = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-                   chi_n_vec, A, alpha, delta, EulDiff, hh_fsolve,
-                   SS_tol)
-        KL_options = {'maxiter': 500}
-        results_KL = \
-            opt.root(KL_errs, KL_init, args=(KL_args), method='lm',
-                     tol=SS_tol, options=(KL_options))
-        K_ss, L_ss = results_KL.x
-        r_params = (A, alpha, delta)
-        w_params = (A, alpha)
-        r_ss = firms.get_r(r_params, K_ss, L_ss)
-        w_ss = firms.get_w(w_params, K_ss, L_ss)
-    else:
-        rw_init = np.array([rss_init, wss_init])
-        rw_args = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-                   chi_n_vec, A, alpha, delta, EulDiff, hh_fsolve,
-                   SS_tol)
-        rw_options = {'maxiter': 500}
-        results_rw = \
-            opt.root(rw_errs, rw_init, args=(rw_args), method='lm',
-                     tol=SS_tol, options=(rw_options))
-        r_ss, w_ss = results_rw.x
-
-    inner_loop_params = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-        chi_n_vec, A, alpha, delta, EulDiff, hh_fsolve, SS_tol)
-    K_ss, L_ss, c_ss, n_ss, b_s_ss, b_splus1_ss, b_Sp1_ss, r_ss, w_ss\
-           = inner_loop(r_ss, w_ss, inner_loop_params)
-
-    Y_params = (A, alpha)
-    Y_ss = aggr.get_Y(Y_params, K_ss, L_ss)
-    C_ss = aggr.get_C(c_ss)
-    n_err_args = (w_ss, c_ss, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, EulDiff)
-    n_err_ss = hh.get_n_errors(n_ss, n_err_args)
-    b_err_params = (beta, sigma)
-    b_err_ss = hh.get_b_errors(b_err_params, r_ss, c_ss, EulDiff)
-    RCerr_ss = Y_ss - C_ss - delta * K_ss
-
-    ss_time = time.clock() - start_time
-
-    ss_output = {
-        'n_ss': n_ss, 'b_s_ss': b_s_ss, 'b_splus1_ss': b_splus1_ss,
-        'c_ss': c_ss, 'b_Sp1_ss': b_Sp1_ss,
-        'w_ss': w_ss, 'r_ss': r_ss, 'K_ss': K_ss, 'L_ss': L_ss,
-        'Y_ss': Y_ss, 'C_ss': C_ss, 'n_err_ss': n_err_ss,
-        'b_err_ss': b_err_ss, 'RCerr_ss': RCerr_ss, 'ss_time': ss_time}
-    print('n_ss is: ', n_ss)
-    print('b_splus1_ss is: ', b_splus1_ss)
-    print('K_ss=', K_ss, ', L_ss=', L_ss)
-    print('r_ss=', r_ss, ', w_ss=', w_ss)
-    print('Maximum abs. labor supply Euler error is: ',
-          np.absolute(n_err_ss).max())
-    print('Maximum abs. savings Euler error is: ',
-          np.absolute(b_err_ss).max())
-    print('Resource constraint error is: ', RCerr_ss)
-    print('Steady-state residual savings b_Sp1 is: ', b_Sp1_ss)
-
-    # Print SS computation time
-    utils.print_time(ss_time, 'SS')
-
-    if graphs:
-        create_graphs(c_ss, b_splus1_ss, n_ss, S)
-
-    return ss_output
-
-
-def get_SS_bsct(init_vals, args, graphs=False):
-    '''
-    --------------------------------------------------------------------
-    Solve for the steady-state solution of the S-period-lived agent OG
-    model with endogenous labor supply using the bisection method for
-    the outer loop
-    --------------------------------------------------------------------
-    INPUTS:
-    init_vals = length 5 tuple,
-                (Kss_init, Lss_init, rss_init, wss_init,c1_init)
-    args      = length 14 tuple, (S, beta, sigma, l_tilde, b_ellip,
-                upsilon, chi_n_vec, A, alpha, delta, SS_tol, EulDiff,
-                hh_fsolve, KL_outer)
-    graphs    = boolean, =True if output steady-state graphs
-
-    OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
-        firms.get_r()
-        firms.get_w()
-        hh.bn_solve()
-        hh.c1_bSp1err()
-        hh.get_cnb_vecs()
-        aggr.get_K()
-        aggr.get_L()
-        aggr.get_Y()
-        aggr.get_C()
-        hh.get_cons()
-        hh.get_n_errors()
-        hh.get_b_errors()
-        utils.print_time()
-
-    OBJECTS CREATED WITHIN FUNCTION:
-    start_time   = scalar > 0, clock time at beginning of program
-    Kss_init     = scalar > 0, initial guess for steady-state aggregate
-                   capital stock
-    Lss_init     = scalar > 0, initial guess for steady-state aggregate
-                   labor
-    rss_init     = scalar > 0, initial guess for steady-state interest
-                   rate
-    wss_init     = scalar > 0, initial guess for steady-state wage
-    c1_init      = scalar > 0, initial guess for first period consumpt'n
-    S            = integer in [3, 80], number of periods an individual
-                   lives
-    beta         = scalar in (0,1), discount factor for each model per
-    sigma        = scalar > 0, coefficient of relative risk aversion
-    l_tilde      = scalar > 0, time endowment for each agent each period
-    b_ellip      = scalar > 0, fitted value of b for elliptical
-                   disutility of labor
-    upsilon      = scalar > 1, fitted value of upsilon for elliptical
-                   disutility of labor
-    chi_n_vec    = (S,) vector, values for chi^n_s
-    A            = scalar > 0, total factor productivity parameter in
-                   firms' production function
-    alpha        = scalar in (0,1), capital share of income
-    delta        = scalar in [0,1], model-period depreciation rate of
-                   capital
-    SS_tol       = scalar > 0, tolerance level for steady-state fsolve
-    EulDiff      = Boolean, =True if want difference version of Euler
-                   errors beta*(1+r)*u'(c2) - u'(c1), =False if want
-                   ratio version [beta*(1+r)*u'(c2)]/[u'(c1)] - 1
-    hh_fsolve    = boolean, =True if solve inner-loop household problem
-                   by choosing c_1 to set final period savings b_{S+1}=0
-    KL_outer     = boolean, =True if guess K and L in outer loop.
-                   Otherwise, guess r and w in outer loop
-    maxiter_SS   = integer >= 1, maximum number of iterations in outer
-                   loop bisection method
-    iter_SS      = integer >= 0, index of iteration number
-    mindist_SS   = scalar > 0, minimum distance tolerance for
-                   convergence
-    dist_SS      = scalar > 0, distance metric for current iteration
-    xi_SS        = scalar in (0,1], updating parameter
-    KL_init      = (2,) vector, (K_init, L_init)
-    c1_options   = length 1 dict, options to pass into
-                   opt.root(c1_bSp1err,...)
-    cnb_args     = length 8 tuple, args to pass into get_cnb_vecs()
-    r_params     = length 3 tuple, args to pass into get_r()
-    w_params     = length 2 tuple, args to pass into get_w()
-    K_init       = scalar, initial value of aggregate capital stock
-    L_init       = scalar, initial value of aggregate labor
-    r_init       = scalar, initial value for interest rate
-    w_init       = scalar, initial value for wage
-    rpath        = (S,) vector, lifetime path of interest rates
-    wpath        = (S,) vector, lifetime path of wages
-    c1_args      = length 10 tuple, args to pass into c1_bSp1err()
-    results_c1   = results object, root finder results from
-                   opt.root(c1_bSp1err,...)
-    c1_new       = scalar, updated value of optimal c1 given r_init and
-                   w_init
-    cvec_new     = (S,) vector, updated values for lifetime consumption
-    nvec_new     = (S,) vector, updated values for lifetime labor supply
-    bvec_new     = (S,) vector, updated values for lifetime savings
-                   (b1, b2,...bS)
-    b_Sp1_new    = scalar, updated value for savings in last period,
-                   should be arbitrarily close to zero
-    K_new        = scalar, updated K given bvec_new
-    K_cnstr      = boolean, =True if K_new <= 0
-    L_new        = scalar, updated L given nvec_new
-    KL_new       = (2,) vector, updated K and L given bvec_new, nvec_new
-    K_ss         = scalar > 0, steady-state aggregate capital stock
-    L_ss         = scalar > 0, steady-state aggregate labor
-    r_ss         = scalar > 0, steady-state interest rate
-    w_ss         = scalar > 0, steady-state wage
-    c1_ss        = scalar > 0, steady-state consumption in first period
-    c_ss         = (S,) vector, steady-state lifetime consumption
-    n_ss         = (S,) vector, steady-state lifetime labor supply
-    b_s_ss       = (S,) vector, steady-state wealth enter period with
-    b_splus1_ss  = (S,) vector, steady-state lifetime savings
-                   (b1_ss, b2_ss, ...bS_ss) where b1_ss=0
-    b_Sp1_ss     = scalar, steady-state savings for period after last
-                   period of life. b_Sp1_ss approx. 0 in equilibrium
-    Y_params     = length 2 tuple, (A, alpha)
-    Y_ss         = scalar > 0, steady-state aggregate output (GDP)
-    C_ss         = scalar > 0, steady-state aggregate consumption
-    n_err_params = length 5 tuple, args to pass into get_n_errors()
-    n_err_ss     = (S,) vector, lifetime labor supply Euler errors
-    b_err_params = length 2 tuple, args to pass into get_b_errors()
-    b_err_ss     = (S-1) vector, lifetime savings Euler errors
-    RCerr_ss     = scalar, resource constraint error
-    ss_time      = scalar, seconds elapsed to run steady-state comput'n
-    ss_output    = length 14 dict, steady-state objects {n_ss, b_ss,
-                   c_ss, b_Sp1_ss, w_ss, r_ss, K_ss, L_ss, Y_ss, C_ss,
-                   n_err_ss, b_err_ss, RCerr_ss, ss_time}
+    Bsct_Tol   = scalar > 0, tolderance level for outer-loop bisection
+                 method
+    Eul_Tol    = scalar > 0, tolerance level for inner-loop root finder
+    EulDiff    = Boolean, =True if want difference version of Euler
+                 errors beta*(1+r)*u'(c2) - u'(c1), =False if want
+                 ratio version [beta*(1+r)*u'(c2)]/[u'(c1)] - 1
+    xi         = scalar in (0, 1], SS updating parameter in outer-loop
+                 bisection method
+    maxiter    = integer >= 1, maximum number of iterations in outer
+                 loop bisection method
+    iter_SS    = integer >= 0, index of iteration number
+    dist       = scalar > 0, distance metric for current iteration
+    c1_options = length 1 dict, options to pass into
+                 opt.root(c1_bSp1err,...)
+    rw_params  = length 3 tuple, (A, alpha, delta) args to pass into
+                 firms.get_r() and firms.get_w()
+    w_init     = scalar, initial value for wage
+    inner_args = length 14 tuple, args to pass into inner_loop()
+    K_new      = scalar > 0, updated K given r_init, w_init, and bvec
+    L_new      = scalar > 0, updated L given r_init, w_init, and nvec
+    cvec       = (S,) vector, updated values for lifetime consumption
+    nvec       = (S,) vector, updated values for lifetime labor supply
+    bvec       = (S,) vector, updated values for lifetime savings
+                 (b1, b2,...bS)
+    b_Sp1      = scalar, updated value for savings in last period,
+                 should be arbitrarily close to zero
+    r_new      = scalar > 0, updated interest rate given bvec and nvec
+    w_new      = scalar > 0, updated wage given bvec and nvec
+    n_errors   = (S,) vector, labor supply Euler errors given r_init
+                 and w_init
+    b_errors   = (S-1,) vector, savings Euler errors given r_init and
+                 w_init
+    all_errors = (2S,) vector, (n_errors, b_errors, b_Sp1)
+    c_ss       = (S,) vector, steady-state lifetime consumption
+    n_ss       = (S,) vector, steady-state lifetime labor supply
+    b_ss       = (S,) vector, steady-state wealth enter period with
+                 (b1, b2, ...bS)
+    b_Sp1_ss   = scalar, steady-state savings for period after last
+                 period of life. b_Sp1_ss approx. 0 in equilibrium
+    n_err_ss   = (S,) vector, lifetime labor supply Euler errors
+    b_err_ss   = (S-1) vector, lifetime savings Euler errors
+    r_ss       = scalar > 0, steady-state interest rate
+    w_ss       = scalar > 0, steady-state wage
+    K_ss       = scalar > 0, steady-state aggregate capital stock
+    L_ss       = scalar > 0, steady-state aggregate labor
+    Y_params   = length 2 tuple, (A, alpha)
+    Y_ss       = scalar > 0, steady-state aggregate output (GDP)
+    C_ss       = scalar > 0, steady-state aggregate consumption
+    RCerr_ss   = scalar, resource constraint error
+    ss_time    = scalar, seconds elapsed for steady-state computation
+    ss_output  = length 14 dict, steady-state objects {n_ss, b_ss,
+                 c_ss, b_Sp1_ss, w_ss, r_ss, K_ss, L_ss, Y_ss, C_ss,
+                 n_err_ss, b_err_ss, RCerr_ss, ss_time}
 
     FILES CREATED BY THIS FUNCTION:
         SS_bc.png
@@ -644,81 +233,53 @@ def get_SS_bsct(init_vals, args, graphs=False):
     --------------------------------------------------------------------
     '''
     start_time = time.clock()
-    Kss_init, Lss_init, rss_init, wss_init, c1_init = init_vals
+    r_init, c1_init = init_vals
     (S, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec, A, alpha,
-        delta, SS_tol, EulDiff, hh_fsolve, KL_outer) = args
-    maxiter_SS = 200
+        delta, Bsct_Tol, Eul_Tol, EulDiff, xi, maxiter) = args
     iter_SS = 0
-    mindist_SS = 1e-10
-    dist_SS = 10
-    xi_SS = 0.15
-    KL_init = np.array([Kss_init, Lss_init])
-    rw_init = np.array([rss_init, wss_init])
+    dist = 10
     c1_options = {'maxiter': 500}
-    cnb_args = (0.0, beta, sigma, l_tilde, b_ellip, upsilon, chi_n_vec,
-                EulDiff)
-    r_params = (A, alpha, delta)
-    w_params = (A, alpha)
-    while (iter_SS < maxiter_SS) and (dist_SS >= mindist_SS):
+    rw_params = (A, alpha, delta)
+    while (iter_SS < maxiter) and (dist >= Bsct_Tol):
         iter_SS += 1
-        if KL_outer:
-            K_init, L_init = KL_init
-            r_init = firms.get_r(r_params, K_init, L_init)
-            w_init = firms.get_w(w_params, K_init, L_init)
+        w_init = firms.get_w(r_init, rw_params)
 
-            inner_loop_params = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-                chi_n_vec, A, alpha, delta, EulDiff, hh_fsolve, SS_tol)
-            K_new, L_new, cvec_new, nvec_new, b_s_vec_new, b_splus1_vec_new,\
-                    b_Sp1_vec_new, r_new, w_new \
-                    = inner_loop(r_init, w_init, inner_loop_params)
+        inner_args = (c1_init, S, beta, sigma, l_tilde, b_ellip,
+                      upsilon, chi_n_vec, A, alpha, delta, EulDiff,
+                      Eul_Tol, c1_options)
+        (K_new, L_new, cvec, nvec, bvec, b_Sp1, r_new, w_new, n_errors,
+            b_errors) = inner_loop(r_init, w_init, inner_args)
+        all_errors = np.hstack((n_errors, b_errors, b_Sp1))
+        dist = (np.absolute(r_new - r_init)).sum()
+        r_init = xi * r_new + (1 - xi) * r_init
+        print('SS Iter=', iter_SS, ', SS Dist=', '%10.4e' % (dist),
+              ', Max Abs Err=', '%10.4e' %
+              (np.absolute(all_errors).max()))
 
-            #K_new = np.maximum(0.0001, K_new)
-            #L_new = np.maximum(0.0001, L_new)
-            print('K and L: ', K_new, L_new)
-            KL_new = np.array([K_new, L_new])
-            dist_SS = ((KL_new - KL_init) ** 2).sum()
-            KL_init = xi_SS * KL_new + (1 - xi_SS) * KL_init
-        else:
-            r_init, w_init = rw_init
-
-            inner_loop_params = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-                chi_n_vec, A, alpha, delta, EulDiff, hh_fsolve, SS_tol)
-            K_new, L_new, cvec_new, nvec_new, b_s_vec_new, b_splus1_vec_new,\
-                    b_Sp1_vec_new, r_new, w_new \
-                    = inner_loop(r_init, w_init, inner_loop_params)
-
-            rw_new = np.array([r_new, w_new])
-            print('r init and new: ', r_init, r_new)
-            print('w init and new: ', w_init, w_new)
-            dist_SS = (((rw_new - rw_init)*1000) ** 2).sum()
-            rw_init = xi_SS * rw_new + (1 - xi_SS) * rw_init
-
-        print('SS Iteration=', iter_SS, ', SS Distance=', dist_SS)
-
-    inner_loop_params = (c1_init, S, beta, sigma, l_tilde, b_ellip, upsilon,
-        chi_n_vec, A, alpha, delta, EulDiff, hh_fsolve, SS_tol)
-    K_ss, L_ss, c_ss, n_ss, b_s_ss, b_splus1_ss, b_Sp1_ss, r_ss, w_ss\
-           = inner_loop(r_new, w_new, inner_loop_params)
-
+    c_ss = cvec.copy()
+    n_ss = nvec.copy()
+    b_ss = bvec.copy()
+    b_Sp1_ss = b_Sp1.copy()
+    n_err_ss = n_errors.copy()
+    b_err_ss = b_errors.copy()
+    r_ss = r_new.copy()
+    w_ss = w_new.copy()
+    K_ss = K_new.copy()
+    L_ss = L_new.copy()
     Y_params = (A, alpha)
-    Y_ss = aggr.get_Y(Y_params, K_ss, L_ss)
+    Y_ss = aggr.get_Y(K_ss, L_ss, Y_params)
     C_ss = aggr.get_C(c_ss)
-    n_err_args = (w_ss, c_ss, sigma, l_tilde, chi_n_vec, b_ellip, upsilon, EulDiff)
-    n_err_ss = hh.get_n_errors(n_ss, n_err_args)
-    b_err_params = (beta, sigma)
-    b_err_ss = hh.get_b_errors(b_err_params, r_ss, c_ss, EulDiff)
     RCerr_ss = Y_ss - C_ss - delta * K_ss
 
     ss_time = time.clock() - start_time
 
     ss_output = {
-        'n_ss': n_ss, 'b_s_ss': b_s_ss, 'b_splus1_ss': b_splus1_ss,
-        'c_ss': c_ss, 'b_Sp1_ss': b_Sp1_ss,
+        'c_ss': c_ss, 'n_ss': n_ss, 'b_ss': b_ss, 'b_Sp1_ss': b_Sp1_ss,
         'w_ss': w_ss, 'r_ss': r_ss, 'K_ss': K_ss, 'L_ss': L_ss,
         'Y_ss': Y_ss, 'C_ss': C_ss, 'n_err_ss': n_err_ss,
         'b_err_ss': b_err_ss, 'RCerr_ss': RCerr_ss, 'ss_time': ss_time}
     print('n_ss is: ', n_ss)
-    print('b_splus1_ss is: ', b_splus1_ss)
+    print('b_ss is: ', b_ss)
     print('K_ss=', K_ss, ', L_ss=', L_ss)
     print('r_ss=', r_ss, ', w_ss=', w_ss)
     print('Maximum abs. labor supply Euler error is: ',
@@ -732,40 +293,42 @@ def get_SS_bsct(init_vals, args, graphs=False):
     utils.print_time(ss_time, 'SS')
 
     if graphs:
-        create_graphs(c_ss, b_splus1_ss, n_ss, S)
+        create_graphs(c_ss, b_ss, n_ss)
 
     return ss_output
 
 
-
-def create_graphs(c_ss, b_splus1_ss, n_ss, S):
+def create_graphs(c_ss, b_ss, n_ss):
     '''
     --------------------------------------------------------------------
-    Plot steady-state results
+    Plot steady-state equilibrium results
     --------------------------------------------------------------------
     INPUTS:
-    S            = integer in [3, 80], number of periods an individual
-                   lives
-    c_ss         = (S,) vector, steady-state lifetime consumption
-    b_splus1_ss  = (S,) vector, steady-state lifetime savings
-                   (b1_ss, b2_ss, ...bS_ss) where b1_ss=0
-    n_ss         = (S,) vector, steady-state lifetime labor supply
+    c_ss = (S,) vector, steady-state lifetime consumption
+    b_ss = (S,) vector, steady-state lifetime savings (b1, b2, ...bS)
+           where b1 = 0
+    n_ss = (S,) vector, steady-state lifetime labor supply
 
     OTHER FUNCTIONS AND FILES CALLED BY THIS FUNCTION:
 
     OBJECTS CREATED WITHIN FUNCTION:
-        cur_path    = string, path name of current directory
-        output_fldr = string, folder in current path to save files
-        output_dir  = string, total path of images folder
-        output_path = string, path of file name of figure to be saved
-        age_pers    = (S,) vector, ages from 1 to S
+    cur_path    = string, path name of current directory
+    output_fldr = string, folder in current path to save files
+    output_dir  = string, total path of images folder
+    output_path = string, path of file name of figure to be saved
+    S           = integer in [3, 80], number of periods an individual
+                  lives
+    b_ss_full   = (S+1,) vector, b_ss with zero appended on end.
+                  (b1, b2, ...bS, bSp1) where b1, bSp1 = 0
+    age_pers_c  = (S,) vector, ages from 1 to S
+    age_pers_b  = (S+1,) vector, ages from 1 to S+1
 
     FILES CREATED BY THIS FUNCTION:
         SS_bc.png
         SS_n.png
 
     RETURNS: None
-    ----------------------------------------------------------------
+    --------------------------------------------------------------------
     '''
     # Create directory if images directory does not already exist
     cur_path = os.path.split(os.path.abspath(__file__))[0]
@@ -775,10 +338,13 @@ def create_graphs(c_ss, b_splus1_ss, n_ss, S):
         os.makedirs(output_dir)
 
     # Plot steady-state consumption and savings distributions
-    age_pers = np.arange(1, S + 1)
+    S = n_ss.shape[0]
+    b_ss_full = np.append(b_ss, 0)
+    age_pers_c = np.arange(1, S + 1)
+    age_pers_b = np.arange(1, S + 2)
     fig, ax = plt.subplots()
-    plt.plot(age_pers, c_ss, marker='D', label='Consumption')
-    plt.plot(age_pers, b_splus1_ss, marker='D', label='Savings')
+    plt.plot(age_pers_c, c_ss, marker='D', label='Consumption')
+    plt.plot(age_pers_b, b_ss_full, marker='D', label='Savings')
     # for the minor ticks, use no labels; default NullFormatter
     minorLocator = MultipleLocator(1)
     ax.xaxis.set_minor_locator(minorLocator)
@@ -796,7 +362,7 @@ def create_graphs(c_ss, b_splus1_ss, n_ss, S):
 
     # Plot steady-state labor supply distributions
     fig, ax = plt.subplots()
-    plt.plot(age_pers, n_ss, marker='D', label='Labor supply')
+    plt.plot(age_pers_c, n_ss, marker='D', label='Labor supply')
     # for the minor ticks, use no labels; default NullFormatter
     minorLocator = MultipleLocator(1)
     ax.xaxis.set_minor_locator(minorLocator)
